@@ -1,9 +1,11 @@
 "use client";
 
-import { useRef } from "react";
-import { motion, useMotionValue, useScroll, useSpring, useTransform } from "framer-motion";
+import { useRef, useState } from "react";
+import { motion, useMotionValue, useMotionValueEvent, useScroll, useSpring, useTransform } from "framer-motion";
 import BgVideo from "./BgVideo";
 import MagneticButton from "./MagneticButton";
+
+const IRIS = { duration: 3, ease: [0.16, 1, 0.3, 1] as const, delay: 0.2 };
 
 export default function Hero() {
   const ref = useRef<HTMLElement>(null);
@@ -21,9 +23,20 @@ export default function Hero() {
   // Deep Dive Parallax: vídeo diminui e um overlay preto chega a 100%
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
   const diveScale = useTransform(scrollYProgress, [0, 1], [1, 0.82]);
-  const overlay = useTransform(scrollYProgress, [0, 0.9], [0, 1]);
+  // opacity roda numa ScrollTimeline nativa: keyframes sempre de 0 a 1, senão o navegador
+  // completa a ponta com o valor base e o overlay "desmergulha" nos últimos 10%.
+  const overlay = useTransform(scrollYProgress, [0, 0.9, 1], [0, 1, 1]);
   const textY = useTransform(scrollYProgress, [0, 1], [0, -140]);
-  const textOpacity = useTransform(scrollYProgress, [0, 0.5], [1, 0]);
+  const textOpacity = useTransform(scrollYProgress, [0, 0.5, 1], [1, 0, 0]);
+
+  // Com o overlay 100% preto o vídeo é invisível: pausa e sai da composição. Libera GPU e
+  // decodificador justo na entrada do "Quem Somos" (2 vídeos 1080p ao mesmo tempo pesavam
+  // ~16ms/frame na GPU integrada). Só re-renderiza ao cruzar o limiar.
+  const [covered, setCovered] = useState(false);
+  useMotionValueEvent(scrollYProgress, "change", (p) => {
+    const next = p >= 0.9;
+    if (next !== covered) setCovered(next);
+  });
 
   return (
     <section
@@ -32,20 +45,30 @@ export default function Hero() {
       aria-label="Apresentação da AXIOM"
       className="relative h-svh min-h-[560px] w-full overflow-hidden bg-[#050505]"
     >
-      {/* Slow Iris Reveal: sai do preto absoluto e a luz vem de dentro para fora */}
+      {/*
+        Slow Iris Reveal: sai do preto absoluto e a luz vem de dentro para fora.
+        Antes: opacity + filter: brightness(0→1) num layer de tela cheia com vídeo (shader por frame).
+        brightness(b) sobre preto ≡ opacidade b, então duas opacidades aninhadas reproduzem
+        exatamente a curva (opacity × brightness) usando só o compositor.
+      */}
       <motion.div
-        initial={{ opacity: 0, filter: "brightness(0)" }}
-        animate={{ opacity: 1, filter: "brightness(1)" }}
-        transition={{ duration: 3, ease: [0.16, 1, 0.3, 1], delay: 0.2 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={IRIS}
         style={{ scale: diveScale }}
-        className="absolute inset-0 bg-[#050505] will-change-transform"
+        className={`absolute inset-0 bg-[#050505] will-change-transform ${covered ? "invisible" : ""}`}
       >
         <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={IRIS}
           style={{ x: px, y: py }}
-          className="absolute inset-0 flex items-center justify-center bg-[#050505] md:-inset-8"
+          className="absolute inset-0 flex items-center justify-center bg-[#050505] will-change-transform md:-inset-8"
         >
           <BgVideo
             src="/assets/videos/hero_animation.mp4"
+            priority
+            hidden={covered}
             className="h-auto w-full object-contain md:h-full md:object-cover"
           />
         </motion.div>
@@ -53,11 +76,12 @@ export default function Hero() {
 
       {/* legibilidade do texto + overlay do mergulho */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#050505] via-transparent to-transparent" />
-      <motion.div style={{ opacity: overlay }} className="pointer-events-none absolute inset-0 bg-black" />
+      {/* valores ligados ao scroll mudam a cada frame: will-change os mantém em camada própria */}
+      <motion.div style={{ opacity: overlay }} className="pointer-events-none absolute inset-0 bg-black will-change-[opacity]" />
 
       <motion.div
         style={{ y: textY, opacity: textOpacity }}
-        className="relative z-10 flex h-full flex-col items-center justify-end px-6 pb-[10svh] text-center"
+        className="relative z-10 will-change-[transform,opacity] flex h-full flex-col items-center justify-end px-6 pb-[10svh] text-center"
       >
         {/* O vídeo já exibe a marca; o H1 fica para SEO e leitores de tela */}
         <h1 className="sr-only">AXIOM</h1>

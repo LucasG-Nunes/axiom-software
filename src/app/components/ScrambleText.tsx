@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useInView } from "framer-motion";
 
 const GLYPHS = "0x8A!#%>01{}[]/=+*^?";
 
-/** Decodifica o texto da esquerda para a direita. Com `whenInView`, só começa ao entrar na tela. */
+/**
+ * Decodifica o texto da esquerda para a direita. Com `whenInView`, só começa ao entrar na tela.
+ *
+ * Performance: o texto final (invisível) reserva o espaço; o embaralhado fica numa camada
+ * absoluta por cima. Assim a largura variável dos glifos não reflui o card/página a cada frame,
+ * e os frames escrevem direto no nó de texto (sem re-render do React).
+ */
 export default function ScrambleText({
   text,
   duration = 1400,
@@ -18,13 +24,15 @@ export default function ScrambleText({
   whenInView?: boolean;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
+  const live = useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, { once: true, margin: "-20%" });
-  const [out, setOut] = useState(text);
   const go = whenInView ? inView : true;
 
   useEffect(() => {
     if (!go) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const node = live.current?.firstChild;
+    if (!node) return;
     let raf = 0;
     let start = 0;
     const timer = setTimeout(() => {
@@ -40,7 +48,7 @@ export default function ScrambleText({
           }
           s += p >= (i + 1) / text.length ? c : GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
         }
-        setOut(p >= 1 ? text : s);
+        node.nodeValue = p >= 1 ? text : s;
         if (p < 1) raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
@@ -48,12 +56,18 @@ export default function ScrambleText({
     return () => {
       clearTimeout(timer);
       cancelAnimationFrame(raf);
+      node.nodeValue = text;
     };
   }, [go, text, duration, delay]);
 
   return (
-    <span ref={ref} aria-label={text}>
-      <span aria-hidden="true">{out}</span>
+    <span ref={ref} aria-label={text} className="relative block">
+      <span aria-hidden="true" className="invisible">
+        {text}
+      </span>
+      <span ref={live} aria-hidden="true" className="absolute inset-0">
+        {text}
+      </span>
     </span>
   );
 }

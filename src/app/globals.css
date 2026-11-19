@@ -54,6 +54,20 @@ body {
   background-size: 64px 64px;
 }
 
+/*
+  Lanterna do "Quem Somos": escuridão com furo de 300px no centro do elemento.
+  Equivale à antiga bg-black/75|80 + mask-image, mas sem máscara: a última cor do gradiente
+  se estende pelo resto do elemento.
+*/
+.torch {
+  background: radial-gradient(circle 300px at center, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.45) 55%, rgba(0, 0, 0, 0.75) 100%);
+}
+@media (min-width: 768px) {
+  .torch {
+    background: radial-gradient(circle 300px at center, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.48) 55%, rgba(0, 0, 0, 0.8) 100%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     scroll-behavior: auto !important;

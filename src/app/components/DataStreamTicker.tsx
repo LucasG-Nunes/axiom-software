@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 
 const HEX = "0123456789ABCDEF8X#%";
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ#%&01";
@@ -9,6 +9,9 @@ const SCRAMBLABLE = /[0-9A-Za-zÀ-ÿ]/;
 /**
  * Roleta criptografada: os caracteres embaralham e travam um a um (esq → dir)
  * até o valor final, ex.: +8X2k → +294k → +460k. `keep` lista caracteres fixos.
+ *
+ * Performance: o valor final (invisível) reserva a caixa; a roleta roda numa camada
+ * absoluta por cima e escreve direto no nó de texto, sem re-render nem reflow do card.
  */
 export default function DataStreamTicker({
   text,
@@ -23,14 +26,14 @@ export default function DataStreamTicker({
   keep?: string;
   className?: string;
 }) {
-  const mask = (t: string) =>
-    t.replace(/./g, (c) => (SCRAMBLABLE.test(c) && !keep.includes(c) ? "0" : c));
-  const [out, setOut] = useState(() => mask(text));
+  const live = useRef<HTMLSpanElement>(null);
+  const masked = text.replace(/./g, (c) => (SCRAMBLABLE.test(c) && !keep.includes(c) ? "0" : c));
 
   useEffect(() => {
-    if (!active) return;
+    const node = live.current?.firstChild;
+    if (!active || !node) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setOut(text);
+      node.nodeValue = text;
       return;
     }
     const chars = [...text];
@@ -48,17 +51,25 @@ export default function DataStreamTicker({
           const pool = /[0-9]/.test(c) ? HEX : LETTERS;
           return pool[Math.floor(Math.random() * pool.length)];
         });
-        setOut(p >= 1 ? text : s.join(""));
+        node.nodeValue = p >= 1 ? text : s.join("");
       }
       if (p < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      node.nodeValue = text;
+    };
   }, [active, text, duration, keep]);
 
   return (
     <span className={className} aria-label={text}>
-      <span aria-hidden="true">{out}</span>
+      <span aria-hidden="true" className="relative block">
+        <span className="invisible">{text}</span>
+        <span ref={live} className="absolute inset-0 whitespace-nowrap">
+          {masked}
+        </span>
+      </span>
     </span>
   );
 }

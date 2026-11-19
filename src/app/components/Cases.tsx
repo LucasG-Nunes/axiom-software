@@ -57,7 +57,6 @@ function HudCard({
   setHovered,
   progress,
   range,
-  floatDelay,
 }: {
   id: CaseId;
   pinned: boolean;
@@ -65,25 +64,30 @@ function HudCard({
   setHovered: (v: CaseId | null) => void;
   progress: MotionValue<number>;
   range: [number, number];
-  floatDelay: number;
 }) {
   const c = CASES[id];
   const [active, setActive] = useState(false);
   // Desktop: o scroll (pin) dita quando o card surge. Mobile: surge ao entrar na tela.
-  const opacity = useTransform(progress, range, [0, 1]);
-  const y = useTransform(progress, range, [140, 0]);
-  const scale = useTransform(progress, range, [0.88, 1]);
+  // O Framer roda o opacity numa ScrollTimeline nativa (compositor). Os keyframes precisam
+  // cobrir 0→1: com só [início, fim] o navegador completa as pontas com o opacity base (0)
+  // e o card voltava a sumir depois de revelado.
+  const stops = [0, range[0], range[1], 1];
+  const opacity = useTransform(progress, stops, [0, 0, 1, 1]);
+  const y = useTransform(progress, stops, [140, 140, 0, 0]);
+  const scale = useTransform(progress, stops, [0.88, 0.88, 1, 1]);
+  // dispara uma única vez; depois o listener de scroll vira no-op barato
+  const fired = useRef(false);
   useMotionValueEvent(progress, "change", (p) => {
-    if (pinned && p > range[1]) {
+    if (!fired.current && pinned && p > range[1]) {
+      fired.current = true;
       setActive(true);
     }
   });
 
-  const isHover = hovered === id;
-  const dimmed = hovered !== null && !isHover; // Focus Shift
+  const dimmed = hovered !== null && hovered !== id; // Focus Shift
 
   const reveal = pinned
-    ? { style: { opacity, y, scale } }
+    ? { style: { opacity, y, scale }, className: "will-change-[transform,opacity]" }
     : {
         initial: { opacity: 0, y: 60 },
         whileInView: { opacity: 1, y: 0 },
@@ -94,53 +98,57 @@ function HudCard({
 
   return (
     <motion.div {...reveal}>
-      {/* levitação contínua */}
-      <motion.div
-        animate={{ y: [0, -8, 0] }}
-        transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: floatDelay }}
+      {/*
+        Sem levitação contínua: qualquer animação infinita obriga a GPU a redesenhar a cena
+        inteira (vídeo + vidro + halo) a 60fps em vez de só nos 24fps do vídeo. Medido na GPU
+        integrada: ~150 frames engasgados → ~20, e o vídeo parou de "travar".
+
+        Focus Shift: antes animava filter: blur(4px) no card inteiro (que contém backdrop-filter
+        sobre vídeo) → filtro sobre filtro, caríssimo. Agora só opacity + scale (GPU).
+        O halo colorido saiu do box-shadow trocado no hover para uma camada com opacity.
+      */}
+      <GlassCard
+        glow={c.color}
+        halo={c.glow}
+        blur
+        onPointerEnter={() => setHovered(id)}
+        onPointerLeave={() => setHovered(null)}
+        animate={{ opacity: dimmed ? 0.35 : 1, scale: dimmed ? 0.97 : 1 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        innerClassName="p-6 lg:p-8"
       >
-        <GlassCard
-          glow={c.color}
-          onPointerEnter={() => setHovered(id)}
-          onPointerLeave={() => setHovered(null)}
-          animate={{ opacity: dimmed ? 0.4 : 1, filter: dimmed ? "blur(4px)" : "blur(0px)" }}
-          transition={{ duration: 0.4 }}
-          style={{ boxShadow: isHover ? c.glow : "none" }}
-          innerClassName="p-6 lg:p-8"
-        >
-          <span className="mb-5 inline-block rounded-full border border-brand-cyan/40 px-3.5 py-1 font-display text-[11px] uppercase tracking-widest text-brand-cyan">
-            {c.tag}
-          </span>
-          <DataStreamTicker
-            text={c.value}
-            keep={c.keep}
-            active={active}
-            className="block font-display text-[clamp(3.25rem,7vw,6rem)] font-bold leading-none tracking-tighter text-white tabular-nums"
-          />
-          <p className="mt-1 font-display text-lg text-white lg:text-xl">{c.unit}</p>
-          <p className="mt-4 text-sm leading-relaxed text-zinc-300">{c.text}</p>
-          {/* some em telas baixas para o card caber na altura do pin */}
-          <ul className="mt-4 space-y-1.5 text-sm text-zinc-400 [@media(max-height:820px)]:hidden">
-            {c.bullets.map((b) => (
-              <li key={b} className="flex gap-2">
-                <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-brand-cyan" />
-                {b}
-              </li>
-            ))}
-          </ul>
-          <p className="mt-4 border-t border-white/10 pt-4 font-display text-sm text-white">
-            <span className="text-brand-cyan">Para você: </span>
-            {c.forYou}
-          </p>
-          <p className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500">
-            {c.links.map((l) => (
-              <a key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" className="link-underline hover:text-white">
-                {l.label} ↗
-              </a>
-            ))}
-          </p>
-        </GlassCard>
-      </motion.div>
+        <span className="mb-5 inline-block rounded-full border border-brand-cyan/40 px-3.5 py-1 font-display text-[11px] uppercase tracking-widest text-brand-cyan">
+          {c.tag}
+        </span>
+        <DataStreamTicker
+          text={c.value}
+          keep={c.keep}
+          active={active}
+          className="block font-display text-[clamp(3.25rem,7vw,6rem)] font-bold leading-none tracking-tighter text-white tabular-nums"
+        />
+        <p className="mt-1 font-display text-lg text-white lg:text-xl">{c.unit}</p>
+        <p className="mt-4 text-sm leading-relaxed text-zinc-300">{c.text}</p>
+        {/* some em telas baixas para o card caber na altura do pin */}
+        <ul className="mt-4 space-y-1.5 text-sm text-zinc-400 [@media(max-height:820px)]:hidden">
+          {c.bullets.map((b) => (
+            <li key={b} className="flex gap-2">
+              <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-brand-cyan" />
+              {b}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-4 border-t border-white/10 pt-4 font-display text-sm text-white">
+          <span className="text-brand-cyan">Para você: </span>
+          {c.forYou}
+        </p>
+        <p className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500">
+          {c.links.map((l) => (
+            <a key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" className="link-underline hover:text-white">
+              {l.label} ↗
+            </a>
+          ))}
+        </p>
+      </GlassCard>
     </motion.div>
   );
 }
@@ -171,8 +179,8 @@ export default function Cases() {
           Experiências e Soluções
         </h2>
         <div className="grid gap-6 lg:grid-cols-2">
-          <HudCard id="cnj" pinned={pinned} hovered={hovered} setHovered={setHovered} progress={scrollYProgress} range={[0.12, 0.3]} floatDelay={0} />
-          <HudCard id="sicredi" pinned={pinned} hovered={hovered} setHovered={setHovered} progress={scrollYProgress} range={[0.44, 0.62]} floatDelay={1.2} />
+          <HudCard id="cnj" pinned={pinned} hovered={hovered} setHovered={setHovered} progress={scrollYProgress} range={[0.12, 0.3]} />
+          <HudCard id="sicredi" pinned={pinned} hovered={hovered} setHovered={setHovered} progress={scrollYProgress} range={[0.44, 0.62]} />
         </div>
       </div>
     </section>
